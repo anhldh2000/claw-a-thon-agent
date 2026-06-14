@@ -18,16 +18,16 @@ def d(offset: int) -> date:
 def generate_mock_tickets() -> list[Ticket]:
     """Mỗi ticket được thiết kế để trigger 1 edge case cụ thể."""
     return [
-        # --- Simple filters (Module 2C) ---
-        Ticket("PROJ-1", "Login API needs test start today", "Ready for Test",
+        # --- Simple filters (checklists) ---
+        Ticket("PROJ-1", "Login API needs test start today", "Ready for testing",
                3, test_start_date=TODAY, test_complete_date=d(3),
                sandbox_date=d(5), assignee="alice", qe_pic="qe_bob",
                component="Marketing Solutions"),
-        Ticket("PROJ-2", "Checkout must complete test today", "Testing",
+        Ticket("PROJ-2", "Checkout must complete test today", "InTest",
                5, test_start_date=d(-2), test_complete_date=TODAY,
                sandbox_date=d(2), assignee="carol", qe_pic="qe_bob",
                component="CRM"),
-        Ticket("PROJ-3", "Payment sandbox tomorrow", "Testing",
+        Ticket("PROJ-3", "Payment sandbox tomorrow", "InTest",
                5, test_start_date=d(-3), test_complete_date=d(1),
                sandbox_date=d(1), assignee="dave", qe_pic="qe_eve",
                component="Marketing Solutions"),
@@ -37,44 +37,51 @@ def generate_mock_tickets() -> list[Ticket]:
                blocked=True, component=None),  # không MS/CRM -> cả hai Dev
 
         # --- Level 1 Violent ---
-        Ticket("PROJ-5", "Start date violation (overdue start)", "Ready for Test",
-               3, test_start_date=d(-2), test_complete_date=d(2),
+        # L1_START_TODAY_WRONG_STATUS: test_start_date==today, status còn InDev
+        Ticket("PROJ-5", "Start date today but still InDev", "InDev",
+               3, test_start_date=TODAY, test_complete_date=d(2),
                sandbox_date=d(4), assignee="grace", qe_pic="qe_bob"),
-        Ticket("PROJ-6", "Test complete overdue", "Testing",
+        # L1_TEST_COMPLETE_OVERDUE: test_complete_date < today, status InTest
+        Ticket("PROJ-6", "Test complete overdue", "InTest",
                8, test_start_date=d(-5), test_complete_date=d(-1),
                sandbox_date=d(3), assignee="heidi", qe_pic="qe_eve"),
-        # >3 tickets cùng start date hôm nay (PROJ-1 + 7,8,9 = 4 tickets)
-        Ticket("PROJ-7", "Same start date #2", "Ready for Test",
+        # L1_TOO_MANY_SAME_TEST_START: >3 tickets cùng start date + qe_pic (qe_bob: 1,5,7,8 = 4)
+        Ticket("PROJ-7", "Same start date #2", "Ready for testing",
                2, test_start_date=TODAY, test_complete_date=d(3),
                sandbox_date=d(5), assignee="ivan", qe_pic="qe_bob"),
-        Ticket("PROJ-8", "Same start date #3", "Ready for Test",
+        Ticket("PROJ-8", "Same start date #3", "Ready for testing",
                2, test_start_date=TODAY, test_complete_date=d(3),
                sandbox_date=d(5), assignee="judy", qe_pic="qe_bob"),
-        Ticket("PROJ-9", "Same start date #4", "Ready for Test",
+        Ticket("PROJ-9", "Same start date #4", "Ready for testing",
                2, test_start_date=TODAY, test_complete_date=d(3),
-               sandbox_date=d(5), assignee="ken", qe_pic="qe_eve"),
-        Ticket("PROJ-10", "Sandbox date status violation", "In Progress",
-               5, test_start_date=d(-1), test_complete_date=d(1),
-               sandbox_date=d(-1), assignee="laura", qe_pic="qe_bob"),
+               sandbox_date=d(5), assignee="ken", qe_pic="qe_bob"),
+        # L1_SANDBOX_DATE_WRONG_STATUS: sandbox_date==today, status InDev (chưa Walkthrough)
+        Ticket("PROJ-10", "Sandbox date but still InDev", "InDev",
+               5, test_start_date=d(-3), test_complete_date=d(1),
+               sandbox_date=TODAY, assignee="laura", qe_pic="qe_bob"),
 
         # --- Level 2 Risk (story point + complete date) ---
-        Ticket("PROJ-11", "High SP near complete date", "Testing",
-               13, test_start_date=d(-1), test_complete_date=d(1),
+        # L2_OVERDUE_STILL_INREVIEW: test_complete_date < today, status InReview
+        Ticket("PROJ-11", "Overdue still InReview", "InReview",
+               13, test_start_date=d(-5), test_complete_date=d(-1),
                sandbox_date=d(3), assignee="mike", qe_pic="qe_eve"),
-        Ticket("PROJ-12", "TEP rule end-sprint risk", "Testing",
-               8, test_start_date=d(-2), test_complete_date=d(2),
+        # L2_DUE_TODAY_SP3_NOT_TESTING: test_complete_date==today, SP=3, status InDev
+        Ticket("PROJ-12", "Due today SP3 not in test", "InDev",
+               3, test_start_date=d(-2), test_complete_date=TODAY,
                sandbox_date=d(4), assignee="nina", qe_pic="qe_bob"),
 
-        # --- Level 3 Commit risk (sandbox -1/-2 + story point) ---
-        Ticket("PROJ-13", "Sandbox-1 commit risk high SP", "Testing",
-               8, test_start_date=d(-2), test_complete_date=d(2),
-               sandbox_date=d(1), assignee="oscar", qe_pic="qe_eve"),
-        Ticket("PROJ-14", "Sandbox-2 commit risk", "Testing",
-               5, test_start_date=d(-1), test_complete_date=d(3),
-               sandbox_date=d(2), assignee="peggy", qe_pic="qe_bob"),
+        # --- Level 3 Warning ---
+        # L3_DUE_TODAY_SP3_IN_TEST: test_complete_date==today, SP=3, status InTest
+        Ticket("PROJ-13", "Due today SP3 InTest", "InTest",
+               3, test_start_date=d(-2), test_complete_date=TODAY,
+               sandbox_date=d(2), assignee="oscar", qe_pic="qe_eve"),
+        # L3_PRE_SANDBOX_1DAY_SP5_NOT_INDEV: sandbox=tomorrow, SP=5, status Reviewed
+        Ticket("PROJ-14", "Sandbox tomorrow SP5 not InDev", "Reviewed",
+               5, test_start_date=d(1), test_complete_date=d(3),
+               sandbox_date=d(1), assignee="peggy", qe_pic="qe_bob"),
 
         # --- NoQE flag + bug ---
-        Ticket("PROJ-15", "NoQE bug ticket", "Testing",
+        Ticket("PROJ-15", "NoQE bug ticket", "InTest",
                3, test_start_date=TODAY, test_complete_date=d(2),
                sandbox_date=d(4), assignee="quinn", qe_pic=None,
                no_qe=True, is_bug=True),

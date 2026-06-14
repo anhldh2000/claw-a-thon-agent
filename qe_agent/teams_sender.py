@@ -1,37 +1,41 @@
 """
-Module 1C - Teams Sender (multi-channel routing).
-Route từng nhóm message tới đúng channel dựa trên (loại message x component).
-
-Channels (mỗi cái 1 Incoming Webhook URL riêng):
-  TEAMS_WEBHOOK_QE       -> QE daily channel
-  TEAMS_WEBHOOK_DEV_MS   -> Dev channel, component "Marketing Solutions"
-  TEAMS_WEBHOOK_DEV_CRM  -> Dev channel, component "CRM"
-
-Routing:
-  - Simple lists (test start/complete): QE + Dev (theo component)
-  - Sandbox tomorrow: Dev (theo component), mention assignee
-  - Blocked: Dev (theo component), mention QE PIC + assignee
-  - Rule results: dựa trên RuleResult.send_qe / send_dev (Person 2 set)
-  - Ticket không thuộc MS/CRM -> gửi cả Dev MS lẫn Dev CRM
-
-LƯU Ý @mention: Incoming Webhook KHÔNG mention thật được. "@name" ở đây là text.
-Muốn mention nảy notification -> Graph API / Power Automate (dùng *_username).
+Module 1C - Teams Sender (gửi qua email đến Teams channel).
+Mỗi channel = 1 Teams channel email address (Forward to email).
 """
 from __future__ import annotations
 import os
-import requests
+import smtplib
 from collections import defaultdict
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 from .models import (
     DailyReport, Ticket, RuleResult,
     CH_QE, CH_DEV_MS, CH_DEV_CRM, dev_channels_for,
 )
 
-LEVEL_NAME = {1: "🔴 LEVEL 1 — Violent", 2: "🟠 LEVEL 2 — Risk", 3: "🟡 LEVEL 3 — Commit Risk"}
+# Load .env từ thư mục cha (project root)
+_env_file = os.path.join(os.path.dirname(__file__), "..", ".env")
+if os.path.exists(_env_file):
+    for _ln in open(_env_file, encoding="utf-8"):
+        _ln = _ln.strip()
+        if _ln and not _ln.startswith("#") and "=" in _ln:
+            _k, _v = _ln.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
 
-CHANNEL_ENV = {
-    CH_QE:      "TEAMS_WEBHOOK_QE",
-    CH_DEV_MS:  "TEAMS_WEBHOOK_DEV_MS",
-    CH_DEV_CRM: "TEAMS_WEBHOOK_DEV_CRM",
+LEVEL_NAME = {1: "🔴 LEVEL 1 — Violent", 2: "🟠 LEVEL 2 — Risk", 3: "🟡 LEVEL 3 — Commit Risk"}
+LEVEL_COLOR = {1: "#d32f2f", 2: "#e65100", 3: "#f9a825"}
+SECTION_COLOR = {
+    "📋 Test Start Today":    "#1565c0",
+    "✅ Test Complete Today":  "#2e7d32",
+    "📦 Sandbox Tomorrow":    "#e65100",
+    "⛔ Blocked":             "#b71c1c",
+}
+
+CHANNEL_EMAIL_ENV = {
+    CH_QE:      "TEAMS_EMAIL_QE",
+    CH_DEV_MS:  "TEAMS_EMAIL_DEV_MS",
+    CH_DEV_CRM: "TEAMS_EMAIL_DEV_CRM",
 }
 CHANNEL_TITLE = {
     CH_QE: "QE Daily", CH_DEV_MS: "Dev — MS", CH_DEV_CRM: "Dev — CRM",
@@ -39,31 +43,16 @@ CHANNEL_TITLE = {
 
 
 # ---------------------------------------------------------------------------
-# Mention helpers
-# ---------------------------------------------------------------------------
 def _mention(name, no_qe=False):
     if not name:
         return "(unassigned)"
     return f"@{name} [NoQE]" if no_qe else f"@{name}"
 
 
-def _line(t: Ticket, with_qe=False, with_assignee=True):
-    parts = [f"**{t.id}** {t.title}"]
-    who = []
-    if with_qe:
-        who.append(_mention(t.qe_pic))
-    if with_assignee:
-        who.append(_mention(t.assignee, t.no_qe))
-    if who:
-        parts.append(" — " + " / ".join(who))
-    return "• " + "".join(parts)
-
-
 # ---------------------------------------------------------------------------
-# Build per-channel content: dict[channel] -> list[(header, [card_blocks])]
+# Routing: DailyReport → dict[channel → list[(header, [(ticket, extra)])]
 # ---------------------------------------------------------------------------
-def route(report: DailyReport):
-    # buckets[channel][header] = list of (ticket, extra_facts)
+def route(report: DailyReport) -> dict[str, list]:
     buckets: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
 
     def add(channels, header, ticket, extra=None):
@@ -85,76 +74,96 @@ def route(report: DailyReport):
                     (dev_channels_for(r.ticket.component) if r.send_dev else [])
             add(chans, LEVEL_NAME[lvl], r.ticket, {"Reason": r.reason})
 
-    # build adaptive card blocks per channel
-    out: dict[str, list] = {}
-    for ch, by_header in buckets.items():
-        sections = []
-        for header, items in by_header.items():
-            tblocks = []
-            for t, extra in items:
-                tblocks.extend(_ticket_block(t, extra))
-            sections.append((header, tblocks))
-        out[ch] = sections
-    return out
+    return {
+        ch: list(by_header.items())
+        for ch, by_header in buckets.items()
+    }
 
 
-def _ticket_block(t: Ticket, extra: dict | None = None) -> list[dict]:
-    """Một khối ticket: tiêu đề + FactSet field:value + nút mở Jira."""
+# ---------------------------------------------------------------------------
+# HTML builder
+# ---------------------------------------------------------------------------
+def _ticket_html(t: Ticket, extra: dict | None = None) -> str:
     base = os.getenv("JIRA_BASE_URL", "").rstrip("/")
-    facts = [
-        {"title": "Status", "value": t.status or "—"},
-        {"title": "Story Point", "value": str(t.story_point) if t.story_point is not None else "—"},
-        {"title": "QC PIC", "value": _mention(t.qe_pic)},
-        {"title": "Assignee", "value": _mention(t.assignee, t.no_qe)},
+    if base:
+        key_html = (f'<a href="{base}/browse/{t.id}" style="color:#1565c0;'
+                    f'font-family:monospace;font-weight:700;text-decoration:none">{t.id}</a>')
+    else:
+        key_html = f'<span style="font-family:monospace;font-weight:700">{t.id}</span>'
+
+    rows = [
+        ("Status",      t.status or "—"),
+        ("Story Point", str(t.story_point) if t.story_point is not None else "—"),
+        ("QC PIC",      _mention(t.qe_pic)),
+        ("Assignee",    _mention(t.assignee, t.no_qe)),
     ]
     if t.component:
-        facts.append({"title": "Component", "value": t.component})
+        rows.append(("Component", t.component))
     for k, v in (extra or {}).items():
-        facts.append({"title": k, "value": v})
+        rows.append((k, str(v)))
 
-    blocks = [
-        {"type": "TextBlock", "text": f"🔸 **{t.id}** — {t.title}",
-         "weight": "Bolder", "wrap": True, "spacing": "Medium"},
-        {"type": "FactSet", "facts": facts},
-    ]
-    if base:
-        blocks.append({
-            "type": "ActionSet",
-            "actions": [{"type": "Action.OpenUrl", "title": "View in Jira",
-                         "url": f"{base}/browse/{t.id}"}],
-        })
-    return blocks
-
-
-def _section_header(text: str) -> dict:
-    return {"type": "TextBlock", "text": text, "size": "Medium",
-            "weight": "Bolder", "color": "Accent", "wrap": True,
-            "separator": True, "spacing": "Large"}
+    facts_html = "".join(
+        f'<tr>'
+        f'<td style="color:#888;font-size:12px;padding:3px 10px;white-space:nowrap">{k}</td>'
+        f'<td style="font-size:13px;padding:3px 10px;color:#333">{v}</td>'
+        f'</tr>'
+        for k, v in rows
+    )
+    return (
+        f'<div style="margin:6px 0;padding:10px 14px;background:#fff;'
+        f'border:1px solid #e0e0e0;border-radius:6px">'
+        f'<div style="font-weight:600;margin-bottom:6px">🔸 {key_html} — {t.title}</div>'
+        f'<table style="border-collapse:collapse">{facts_html}</table>'
+        f'</div>'
+    )
 
 
-def _build_card(title: str, date_str: str, sections: list[tuple[str, list[dict]]]) -> dict:
-    body: list[dict] = [
-        {"type": "TextBlock", "text": title, "size": "ExtraLarge",
-         "weight": "Bolder", "color": "Accent", "wrap": True},
-        {"type": "TextBlock", "text": f"📅 {date_str}", "isSubtle": True,
-         "spacing": "None", "wrap": True},
-    ]
-    for header, ticket_blocks in sections:
-        body.append(_section_header(header))
-        body.extend(ticket_blocks)
-    return {"type": "message", "attachments": [{
-        "contentType": "application/vnd.microsoft.card.adaptive",
-        "content": {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                    "type": "AdaptiveCard", "version": "1.4", "body": body,
-                    "msteams": {"width": "Full"}}}]}
+def _build_html(channel_title: str, date_str: str,
+                sections: list[tuple[str, list]]) -> str:
+    sections_html = ""
+    for header, items in sections:
+        color = LEVEL_COLOR.get(
+            next((k for k, v in LEVEL_NAME.items() if v == header), None),
+            SECTION_COLOR.get(header, "#1565c0")
+        )
+        tickets_html = "".join(_ticket_html(t, extra) for t, extra in items)
+        sections_html += (
+            f'<div style="margin-bottom:16px">'
+            f'<div style="background:{color};color:#fff;padding:9px 14px;'
+            f'border-radius:6px 6px 0 0;font-weight:700;font-size:13px">'
+            f'{header} &nbsp;<span style="opacity:.8;font-weight:400">({len(items)} ticket)</span>'
+            f'</div>'
+            f'<div style="padding:8px;background:#fafafa;border:1px solid #e0e0e0;'
+            f'border-top:none;border-radius:0 0 6px 6px">{tickets_html}</div>'
+            f'</div>'
+        )
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;
+             background:#f5f5f5;margin:0;padding:20px">
+<div style="max-width:680px;margin:0 auto">
+  <div style="background:#1565c0;border-radius:10px 10px 0 0;
+              padding:20px 24px;color:#fff">
+    <div style="font-size:18px;font-weight:700">🛡️ QA Watchdog — {channel_title}</div>
+    <div style="font-size:13px;opacity:.85;margin-top:4px">📅 {date_str}</div>
+  </div>
+  <div style="background:#fff;border-radius:0 0 10px 10px;
+              padding:20px 24px;border:1px solid #e0e0e0;border-top:none">
+    {sections_html}
+    <div style="margin-top:20px;padding-top:12px;border-top:1px solid #f0f0f0;
+                font-size:11px;color:#aaa">
+      Generated by QA Watchdog Agent • {date_str}
+    </div>
+  </div>
+</div>
+</body></html>"""
 
 
-def _facts_to_text(facts):
-    return "\n".join(f"    - {f['title']}: {f['value']}" for f in facts)
-
-
+# ---------------------------------------------------------------------------
+# render_text — preview không cần Teams (dùng cho --dry-run)
+# ---------------------------------------------------------------------------
 def render_text(report: DailyReport) -> str:
-    """Preview tất cả channel ra text — để test không cần Teams."""
     routed = route(report)
     out = []
     for ch in [CH_QE, CH_DEV_MS, CH_DEV_CRM]:
@@ -165,16 +174,32 @@ def render_text(report: DailyReport) -> str:
         if not sections:
             out.append("(no messages)\n")
             continue
-        for header, blocks in sections:
+        for header, items in sections:
             out.append(f"\n[{header}]")
-            for b in blocks:
-                if b["type"] == "TextBlock" and b.get("weight") == "Bolder" \
-                        and b["text"].startswith("🔸"):
-                    out.append("  " + b["text"].replace("**", ""))
-                elif b["type"] == "FactSet":
-                    out.append(_facts_to_text(b["facts"]))
+            for t, extra in items:
+                out.append(f"  🔸 {t.id} — {t.title}")
+                out.append(f"    Status={t.status}  SP={t.story_point}  "
+                           f"QE={t.qe_pic or '—'}  Assignee={t.assignee}")
+                if extra:
+                    for k, v in extra.items():
+                        out.append(f"    {k}: {v}")
         out.append("")
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# send
+# ---------------------------------------------------------------------------
+def _send_one(to: str, subject: str, html: str, from_addr: str, password: str) -> None:
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = from_addr
+    msg["To"]      = to
+    msg.attach(MIMEText(html, "html", "utf-8"))
+    with smtplib.SMTP("smtp.gmail.com", 587) as s:
+        s.starttls()
+        s.login(from_addr, password)
+        s.sendmail(from_addr, to, msg.as_string())
 
 
 def send(report: DailyReport, dry_run: bool = False) -> None:
@@ -185,13 +210,25 @@ def send(report: DailyReport, dry_run: bool = False) -> None:
         print(render_text(report))
         return
 
+    gmail_user = os.getenv("GMAIL_USER")
+    gmail_pass = os.getenv("GMAIL_APP_PASSWORD")
+
+    if not gmail_user or not gmail_pass:
+        raise RuntimeError("Thiếu GMAIL_USER / GMAIL_APP_PASSWORD trong .env")
+
     for ch, sections in routed.items():
         if not sections:
             continue
-        url = os.getenv(CHANNEL_ENV[ch])
-        if not url:
-            print(f"[skip] {CHANNEL_ENV[ch]} chưa set — bỏ qua channel {ch}")
+        to_email = os.getenv(CHANNEL_EMAIL_ENV[ch])
+        if not to_email:
+            print(f"[skip] {CHANNEL_EMAIL_ENV[ch]} chưa set — bỏ qua {ch}")
             continue
-        card = _build_card(CHANNEL_TITLE[ch], date_str, sections)
-        resp = requests.post(url, json=card, timeout=30)
-        resp.raise_for_status()
+
+        has_l1 = any(h == LEVEL_NAME[1] for h, _ in sections)
+        has_l2 = any(h == LEVEL_NAME[2] for h, _ in sections)
+        prefix = "🔴" if has_l1 else ("🟠" if has_l2 else "📋")
+        subject = f"{prefix} QA Watchdog {date_str} — {CHANNEL_TITLE[ch]}"
+
+        html = _build_html(CHANNEL_TITLE[ch], date_str, sections)
+        _send_one(to_email, subject, html, gmail_user, gmail_pass)
+        print(f"[sent] {subject} → {to_email}")

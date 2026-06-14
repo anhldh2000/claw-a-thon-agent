@@ -1,0 +1,6 @@
+.specstory/
+.claude/
+.env
+__pycache__/
+*.pyc
+*.db
