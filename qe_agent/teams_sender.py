@@ -172,20 +172,12 @@ def _rule_table(group: dict) -> str:
     )
 
 
-def _build_html(channel_title: str, date_str: str, groups: list[dict],
-                page: int = None, total_pages: int = None) -> str:
-    # gom group theo level để in header level
+def _level_blocks(groups: list[dict]) -> str:
+    """Render các khối theo level → rule (trả về chuỗi HTML)."""
     by_level: dict[int, list] = defaultdict(list)
     for g in groups:
         by_level[g["level"]].append(g)
-
-    part_badge = ""
-    if total_pages and total_pages > 1:
-        part_badge = (f'<span style="background:rgba(255,255,255,.25);border-radius:10px;'
-                      f'padding:2px 10px;font-size:12px;font-weight:600;margin-left:8px">'
-                      f'Phần {page}/{total_pages}</span>')
-
-    body = ""
+    out = ""
     for level in sorted(by_level):
         color = LEVEL_COLOR.get(level, "#757575")
         total = sum(len(g["rows"]) for g in by_level[level])
@@ -214,7 +206,10 @@ def _filter_groups_by_team(groups: list[dict], team_component: str) -> list[dict
 
 def _team_split_blocks(groups: list[dict]) -> str:
     """Chia QE Daily thành 2 nhóm MS và CRM, mỗi nhóm là các khối level→rule."""
-    from .models import COMPONENT_MS, COMPONENT_CRM
+    try:
+        from .models import COMPONENT_MS, COMPONENT_CRM
+    except ImportError:
+        from models import COMPONENT_MS, COMPONENT_CRM
     out = ""
     for team_name, comp, color in [("🟢 MS — Marketing Solutions", COMPONENT_MS, "#2e7d32"),
                                     ("🟣 CRM", COMPONENT_CRM, "#6a1b9a")]:
@@ -231,7 +226,12 @@ def _team_split_blocks(groups: list[dict]) -> str:
 
 
 def _build_html(channel_title: str, date_str: str, groups: list[dict],
-                team_split: bool = False) -> str:
+                team_split: bool = False, page: int = None, total_pages: int = None) -> str:
+    part_badge = ""
+    if total_pages and total_pages > 1:
+        part_badge = (f'<span style="background:rgba(255,255,255,.25);border-radius:10px;'
+                      f'padding:2px 10px;font-size:12px;font-weight:600;margin-left:8px">'
+                      f'Phần {page}/{total_pages}</span>')
     body = _team_split_blocks(groups) if team_split else _level_blocks(groups)
 
     return f"""<!doctype html>
@@ -324,7 +324,8 @@ def _paginate(groups: list[dict], max_rows: int) -> list[list[dict]]:
 
 
 # ---------------------------------------------------------------------------
-# send
+# send — qua Power Automate Flow: POST JSON {title, date, html} tới flow URL,
+# flow post vào kênh Teams. Không cần Graph API / email.
 # ---------------------------------------------------------------------------
 def _post_flow(flow_url: str, payload: dict) -> None:
     resp = requests.post(flow_url, json=payload, timeout=30)
@@ -339,12 +340,6 @@ def send(report: DailyReport, dry_run: bool = False) -> None:
         print(render_text(report))
         return
 
-    gmail_user = os.getenv("GMAIL_USER")
-    gmail_pass = os.getenv("GMAIL_APP_PASSWORD")
-
-    if not gmail_user or not gmail_pass:
-        raise RuntimeError("Thiếu GMAIL_USER / GMAIL_APP_PASSWORD trong .env")
-
     max_rows = _max_rows_per_email()
 
     for ch, groups in routed.items():
@@ -355,7 +350,7 @@ def send(report: DailyReport, dry_run: bool = False) -> None:
             print(f"[skip] {CHANNEL_FLOW_ENV[ch]} chưa set — bỏ qua {ch}")
             continue
 
-        # Tách thành nhiều email nếu data quá dài để email client hiển thị đủ
+        # Tách thành nhiều bài post nếu data quá dài để Teams hiển thị đủ
         pages = _paginate(groups, max_rows)
         total = len(pages)
 
@@ -363,10 +358,11 @@ def send(report: DailyReport, dry_run: bool = False) -> None:
             levels = {g["level"] for g in page_groups}
             prefix = "🔴" if 1 in levels else ("🟠" if 2 in levels else "📋")
             part = f" (Phần {idx}/{total})" if total > 1 else ""
-            subject = f"{prefix} QE Watchdog {date_str} — {CHANNEL_TITLE[ch]}{part}"
+            title = f"{prefix} QE Watchdog — {CHANNEL_TITLE[ch]}{part}"
 
             html = _build_html(CHANNEL_TITLE[ch], date_str, page_groups,
+                               team_split=(ch == CH_QE),
                                page=idx if total > 1 else None,
                                total_pages=total if total > 1 else None)
-            _send_one(to_email, subject, html, gmail_user, gmail_pass)
-            print(f"[sent] {subject} → {to_email}")
+            _post_flow(flow_url, {"title": title, "date": date_str, "html": html})
+            print(f"[posted] {title} → {ch}")
