@@ -39,7 +39,7 @@ checklists:
 rules:
   # ── LEVEL 0: DATA HYGIENE ─────────────────────────────────────────────────
   - id: L0_MISSING_DATES
-    name: "Thiếu sandbox date / test start date / test complete date"
+    name: "Chưa điền test start / test complete / sandbox date"
     level: 0
     type: reactive
     condition: >
@@ -53,7 +53,7 @@ rules:
 
   # ── LEVEL 1: VIOLENT ──────────────────────────────────────────────────────
   - id: L1_TEST_START_OVERDUE
-    name: "Quá test start date, chưa start test"
+    name: "Qua ngày test start vẫn chưa start test"
     level: 1
     type: reactive
     condition: >
@@ -65,7 +65,7 @@ rules:
     message: "🔴 {key} đã qua test start date ({test_start_date}) nhưng đang {status}."
 
   - id: L1_TEST_COMPLETE_OVERDUE
-    name: "Quá test complete date, chưa hoàn thành Testing"
+    name: "Test complete đã qua nhưng chưa qua InTest"
     level: 1
     type: reactive
     condition: >
@@ -77,7 +77,7 @@ rules:
     message: "🔴 {key} quá hạn test complete ({test_complete_date}) — đang {status}."
 
   - id: L1_TOO_MANY_SAME_TEST_START
-    name: "Quá 3 ticket cùng test start date hôm nay"
+    name: "Một QE bị dồn quá 3 ticket cùng test start hôm nay"
     level: 1
     type: aggregate
     aggregate_by: qe_pic
@@ -89,7 +89,7 @@ rules:
     message: "🔴 {qe_pic} có {count} tickets cùng test start date hôm nay: {ticket_list}."
 
   - id: L1_SANDBOX_DATE_WRONG_STATUS
-    name: "Đến sandbox date nhưng chưa Walkthrough / Ready for Testing"
+    name: "Tới sandbox date nhưng chưa Walkthrough / Ready for Testing"
     level: 1
     type: reactive
     condition: >
@@ -104,7 +104,7 @@ rules:
 
   # ── LEVEL 2: RISK (không commit được theo plan) ────────────────────────────
   - id: L2_OVERDUE_STILL_INREVIEW
-    name: "Quá test complete date, vẫn InReview"
+    name: "Test complete đã qua nhưng vẫn còn InReview"
     level: 2
     type: reactive
     condition: >
@@ -116,7 +116,7 @@ rules:
     message: "🟠 {key} quá hạn test complete ({test_complete_date}), đang {status}"
 
   - id: L2_DUE_TODAY_SP3_NOT_TESTING
-    name: "Hết hạn hôm nay, SP=3, chưa InTest/InReview"
+    name: "Test complete hôm nay, 3 story point, chưa InTest/InReview"
     level: 2
     type: reactive
     condition: >
@@ -156,7 +156,7 @@ rules:
 
   # ── LEVEL 3: WARNING ──────────────────────────────────────────────────────
   - id: L3_DUE_TODAY_SP3_IN_TEST
-    name: "Hết hạn hôm nay, SP=3, đang InTest"
+    name: "Test complete hôm nay, 3 story point, đang InTest"
     level: 3
     type: reactive
     condition: >
@@ -182,7 +182,7 @@ rules:
     message: "🟡 {key} còn 1 ngày đến test complete ({test_complete_date}), SP={story_point}, đang InTest — theo dõi tiến độ."
 
   - id: L3_PRE_SANDBOX_2DAYS_SP8_NOT_INDEV
-    name: "Còn 2 ngày đến sandbox, SP=8, chưa InDev"
+    name: "Còn 2 ngày tới sandbox, 8 story point, chưa InDev"
     level: 3
     type: reactive
     condition: >
@@ -197,7 +197,7 @@ rules:
     message: "🟡 {key} còn 2 ngày đến sandbox ({sandbox_date}), SP=8, chưa InDev."
 
   - id: L3_PRE_SANDBOX_1DAY_SP5_NOT_INDEV
-    name: "Còn 1 ngày đến sandbox, SP=5, chưa InDev"
+    name: "Còn 1 ngày tới sandbox, 5 story point, chưa InDev"
     level: 3
     type: reactive
     condition: >

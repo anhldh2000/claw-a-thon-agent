@@ -53,7 +53,7 @@ def _norm_status(raw: str) -> str:
 # JQL filter theo roadmap, gồm bug. Sửa cho đúng project/board của bạn.
 ROADMAP_JQL = os.getenv(
     "JIRA_JQL",
-    'project = GE AND issuetype in (Story, Task, Bug) ORDER BY created DESC'
+    f'project = GE AND {ISSUETYPE_CLAUSE} ORDER BY created DESC'
 )
 
 # Map tên field Jira -> field của Ticket. (Zalopay Jira Server, đã xác nhận)
@@ -143,7 +143,7 @@ def fetch_by_sprint(sprint: str | None = None, team: str | None = None) -> list[
         clause = f"sprint = {sprint}"
     else:
         clause = f'sprint = "{sprint}"'
-    jql = f"{clause} AND issuetype in (Story, Task, Bug) ORDER BY created DESC"
+    jql = f"{clause} AND {ISSUETYPE_CLAUSE} ORDER BY created DESC"
     tickets = _search(jql)
     if team:
         try:
@@ -307,7 +307,8 @@ def _normalize(issue: dict) -> Ticket:
         qe_pic_username=qe_user,
         no_qe=bool(NOQE_LABELS & set(labels)),
         blocked=status_name.lower() in STATUS_BLOCKED,
-        is_bug=(f.get("issuetype") or {}).get("name", "") == "Bug",
+        is_bug=("bug" in (f.get("issuetype") or {}).get("name", "").lower()
+                or "defect" in (f.get("issuetype") or {}).get("name", "").lower()),
         component=component,
         sprints=_parse_sprints(f.get(SPRINT_FIELD)),
     )
