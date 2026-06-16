@@ -288,33 +288,53 @@ def render_text(report: DailyReport) -> str:
 # ---------------------------------------------------------------------------
 def _max_rows_per_email() -> int:
     try:
-        return max(10, int(os.getenv("REPORT_MAX_ROWS_PER_EMAIL", "60")))
+        return max(5, int(os.getenv("REPORT_MAX_ROWS_PER_EMAIL", "60")))
     except ValueError:
         return 60
 
 
-def _split_group(group: dict, max_rows: int) -> list[dict]:
+def _max_bytes_per_email() -> int:
+    # ngưỡng kích thước HTML/email mỗi part (mặc định ~45KB — an toàn dưới mức
+    # Gmail clip ~102KB; còn chừa chỗ cho wrapper + header)
+    try:
+        return max(10000, int(os.getenv("REPORT_MAX_BYTES_PER_EMAIL", "45000")))
+    except ValueError:
+        return 45000
+
+
+def _group_bytes(group: dict) -> int:
+    """Ước lượng kích thước HTML render của 1 group (để chia theo dung lượng)."""
+    return len(_rule_table(group).encode("utf-8"))
+
+
+def _split_group(group: dict, max_rows: int, max_bytes: int) -> list[dict]:
+    """Chia 1 group quá lớn (theo dòng HOẶC theo bytes) thành nhiều group con."""
     rows = group["rows"]
-    if len(rows) <= max_rows:
+    if len(rows) <= max_rows and _group_bytes(group) <= max_bytes:
         return [group]
-    return [{**group, "rows": rows[i:i + max_rows]}
-            for i in range(0, len(rows), max_rows)]
+    # ước lượng bytes/row để giới hạn cả theo dung lượng
+    per_row = max(1, _group_bytes(group) // max(1, len(rows)))
+    chunk = max(1, min(max_rows, max_bytes // per_row))
+    return [{**group, "rows": rows[i:i + chunk]} for i in range(0, len(rows), chunk)]
 
 
-def _paginate(groups: list[dict], max_rows: int) -> list[list[dict]]:
-    """Pack groups vào các trang, mỗi trang tổng số dòng <= max_rows.
-    Group nào lớn hơn max_rows sẽ tự được chia tách qua nhiều trang."""
+def _paginate(groups: list[dict], max_rows: int, max_bytes: int = None) -> list[list[dict]]:
+    """Pack groups vào các trang — mỗi trang ≤ max_rows dòng VÀ ≤ max_bytes.
+    'Data quá lớn' (nhiều dòng hoặc nặng) sẽ tự tách thành nhiều part/email."""
+    if max_bytes is None:
+        max_bytes = _max_bytes_per_email()
     pages: list[list[dict]] = []
     cur: list[dict] = []
-    cur_rows = 0
+    cur_rows = cur_bytes = 0
     for g in groups:
-        for sub in _split_group(g, max_rows):
-            n = len(sub["rows"])
-            if cur and cur_rows + n > max_rows:
+        for sub in _split_group(g, max_rows, max_bytes):
+            n = len(sub["rows"]); b = _group_bytes(sub)
+            if cur and (cur_rows + n > max_rows or cur_bytes + b > max_bytes):
                 pages.append(cur)
-                cur, cur_rows = [], 0
+                cur, cur_rows, cur_bytes = [], 0, 0
             cur.append(sub)
             cur_rows += n
+            cur_bytes += b
     if cur:
         pages.append(cur)
     return pages or [[]]
