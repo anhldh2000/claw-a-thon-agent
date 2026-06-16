@@ -11,12 +11,17 @@ Run modes:
 from __future__ import annotations
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import date
 
-from .rule_engine import run as run_rules
-from .mock_data import generate_mock_tickets
+# đảm bảo ROOT trên sys.path khi chạy CLI (python main.py)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paths  # noqa: F401 — nạp .env
+
+from engine.rule_engine import run as run_rules
+from engine.mock_data import generate_mock_tickets
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,15 +43,15 @@ def run_pipeline(use_mock: bool = False, dry_run: bool = False,
     if use_mock:
         tickets = generate_mock_tickets()
     elif keys:
-        from .jira_fetcher import fetch_by_keys
+        from integrations.jira_fetcher import fetch_by_keys
         tickets = fetch_by_keys(keys)
     elif sprint:
-        from .jira_fetcher import fetch_by_sprint
+        from integrations.jira_fetcher import fetch_by_sprint
         tickets = fetch_by_sprint(sprint, team=team)  # sprint id/tên cụ thể
     else:
         # MẶC ĐỊNH: chỉ active sprint của project (env JIRA_PROJECT, mặc định GE)
         import os as _os
-        from .jira_fetcher import fetch_active_sprint
+        from integrations.jira_fetcher import fetch_active_sprint
         project = _os.getenv("JIRA_PROJECT", "GE")
         tickets = fetch_active_sprint(project, team=team)
     log.info("Fetched %d tickets", len(tickets))
@@ -66,8 +71,8 @@ def run_pipeline(use_mock: bool = False, dry_run: bool = False,
     # 3a. preview mode — render HTML and open in browser (demo use)
     if preview:
         import tempfile, webbrowser
-        from .teams_sender import route, _build_html, CHANNEL_TITLE
-        from .models import CH_QE, CH_DEV_MS, CH_DEV_CRM
+        from integrations.teams_sender import route, _build_html, CHANNEL_TITLE
+        from engine.models import CH_QE, CH_DEV_MS, CH_DEV_CRM
         routed = route(report)
         date_str = report.report_date.isoformat()
         pages = []
@@ -84,7 +89,7 @@ def run_pipeline(use_mock: bool = False, dry_run: bool = False,
         return
 
     # 3b. send (with retry)
-    from .teams_sender import send
+    from integrations.teams_sender import send
     for attempt in range(1, MAX_RETRY + 1):
         try:
             send(report, dry_run=dry_run)
@@ -133,7 +138,7 @@ def main() -> None:
     args = p.parse_args()
 
     if args.list_sprints:
-        from .jira_fetcher import list_active_sprints
+        from integrations.jira_fetcher import list_active_sprints
         for s in list_active_sprints(args.list_sprints):
             print(f"  id={s['id']}  {s['name']}  "
                   f"({s.get('startDate','?')} → {s.get('endDate','?')})")

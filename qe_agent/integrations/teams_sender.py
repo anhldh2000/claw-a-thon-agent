@@ -10,25 +10,11 @@ import json
 import requests
 from collections import defaultdict
 
-try:
-    from .models import (
-        DailyReport, Ticket, RuleResult,
-        CH_QE, CH_DEV_MS, CH_DEV_CRM, dev_channels_for,
-    )
-except ImportError:  # flat execution (Docker /app)
-    from models import (
-        DailyReport, Ticket, RuleResult,
-        CH_QE, CH_DEV_MS, CH_DEV_CRM, dev_channels_for,
-    )
-
-# Load .env từ thư mục cha (project root)
-_env_file = os.path.join(os.path.dirname(__file__), "..", ".env")
-if os.path.exists(_env_file):
-    for _ln in open(_env_file, encoding="utf-8"):
-        _ln = _ln.strip()
-        if _ln and not _ln.startswith("#") and "=" in _ln:
-            _k, _v = _ln.split("=", 1)
-            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+import paths  # noqa: F401 — nạp .env
+from engine.models import (
+    DailyReport, Ticket, RuleResult,
+    CH_QE, CH_DEV_MS, CH_DEV_CRM, dev_channels_for,
+)
 
 LEVEL_NAME = {-1: "📋 CHECKLIST", 0: "⚪ DATA", 1: "🔴 LEVEL 1 — Violent", 2: "🟠 LEVEL 2 — Risk", 3: "🟡 LEVEL 3 — Commit Risk"}
 LEVEL_COLOR = {-1: "#1565c0", 0: "#757575", 1: "#d32f2f", 2: "#e65100", 3: "#f9a825"}
@@ -206,10 +192,7 @@ def _filter_groups_by_team(groups: list[dict], team_component: str) -> list[dict
 
 def _team_split_blocks(groups: list[dict]) -> str:
     """Chia QE Daily thành 2 nhóm MS và CRM, mỗi nhóm là các khối level→rule."""
-    try:
-        from .models import COMPONENT_MS, COMPONENT_CRM
-    except ImportError:
-        from models import COMPONENT_MS, COMPONENT_CRM
+    from engine.models import COMPONENT_MS, COMPONENT_CRM
     out = ""
     for team_name, comp, color in [("🟢 MS — Marketing Solutions", COMPONENT_MS, "#2e7d32"),
                                     ("🟣 CRM", COMPONENT_CRM, "#6a1b9a")]:

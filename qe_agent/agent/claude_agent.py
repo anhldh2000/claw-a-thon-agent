@@ -23,31 +23,16 @@ import argparse, json, sys, os
 from datetime import date
 from typing import Optional
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# đảm bảo ROOT (thư mục chứa paths.py / server.py) nằm trên sys.path khi chạy CLI
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-# Auto-load .env: ưu tiên thư mục cha (project root), fallback cùng thư mục
-for _env_candidate in [
-    os.path.join(_SCRIPT_DIR, "..", ".env"),
-    os.path.join(_SCRIPT_DIR, ".env"),
-]:
-    if os.path.exists(_env_candidate):
-        for _line in open(_env_candidate, encoding="utf-8"):
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _k, _v = _line.split("=", 1)
-                os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
-        break
-
+import paths  # nạp .env + định nghĩa đường dẫn config/snapshots/data
 from openai import OpenAI
 
-# Import package modules
-try:
-    from .jira_adapter import normalize_issue, fetch_tickets, SCAN_JQL
-    from .rule_engine import RuleEngine
-except ImportError:
-    sys.path.insert(0, _SCRIPT_DIR)
-    from jira_adapter import normalize_issue, fetch_tickets, SCAN_JQL
-    from rule_engine import RuleEngine
+from integrations.jira_adapter import normalize_issue, fetch_tickets, SCAN_JQL
+from engine.rule_engine import RuleEngine
 
 # ---------------------------------------------------------------- models
 GREENNODE_BASE_URL = os.environ.get(
@@ -61,8 +46,8 @@ AGENT_MODEL     = "minimax/minimax-m2.5"                   # tool use, agentic �
 CHECKLIST_MODEL = "deepseek/deepseek-reasoner"             # TEP + ISTQB — free reasoning
 FALLBACK_MODEL  = "qwen/qwen3-235b-a22b-instruct-2507"     # free 235B — unlimited fallback
 
-_RULES_YAML = os.path.join(_SCRIPT_DIR, "rules.yaml")
-_WATCHDOG_DB = os.path.join(_SCRIPT_DIR, "watchdog.db")
+_RULES_YAML = paths.RULES_YAML
+_WATCHDOG_DB = paths.DB_PATH
 
 # ---------------------------------------------------------------- system prompts
 SYSTEM_PROMPT_AGENT = """Bạn là QE Watchdog Agent của team Zalopay — chuyên phân tích QE process và phát hiện vi phạm của sprint hiện tại.
@@ -212,8 +197,7 @@ def _get_engine() -> RuleEngine:
 
 def _tool_search_jira(jql: str, snapshot_file: Optional[str] = None) -> list:
     if snapshot_file:
-        if not os.path.isabs(snapshot_file):
-            snapshot_file = os.path.join(_SCRIPT_DIR, snapshot_file)
+        snapshot_file = paths.snapshot_path(snapshot_file)
         snap = json.load(open(snapshot_file, encoding="utf-8"))
         issues = snap["issues"] if isinstance(snap, dict) else snap
         print(f"  [search_jira] snapshot ({len(issues)} issues)", file=sys.stderr)
@@ -239,8 +223,7 @@ def _tool_get_ticket_history(ticket_key: str) -> list:
 
 def _tool_get_ticket_detail(ticket_key: str, snapshot_file: Optional[str] = None) -> dict:
     if snapshot_file:
-        if not os.path.isabs(snapshot_file):
-            snapshot_file = os.path.join(_SCRIPT_DIR, snapshot_file)
+        snapshot_file = paths.snapshot_path(snapshot_file)
         snap = json.load(open(snapshot_file, encoding="utf-8"))
         issues = snap["issues"] if isinstance(snap, dict) else snap
         for raw in issues:
@@ -469,7 +452,7 @@ def _build_user_message(args) -> str:
             f"để lấy danh sách tickets, sau đó gọi run_rule_engine để đánh giá vi phạm QE "
             f"cho ngày {scan_date}. Tổng hợp kết quả rõ ràng bằng tiếng Việt."
         )
-    default_snap = os.path.join(_SCRIPT_DIR, "ge_sprint_snapshot.json")
+    default_snap = paths.snapshot_path("ge_sprint_snapshot.json")
     if os.path.exists(default_snap):
         return (
             f"Gọi tool search_jira với jql='project=GE' và snapshot_file='{default_snap}' "

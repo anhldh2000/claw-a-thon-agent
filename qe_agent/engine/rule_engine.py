@@ -200,7 +200,7 @@ class RuleEngine:
 # ---------------------------------------------------------------- pipeline helper
 # Replaces rules.py — converts Ticket dataclasses → dicts → RuleEngine → DailyReport
 
-_RULES_YAML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rules.yaml")
+from paths import RULES_YAML as _RULES_YAML
 _LEVEL_MAP = None  # lazy import to avoid circular
 
 

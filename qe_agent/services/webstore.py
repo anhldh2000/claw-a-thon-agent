@@ -21,8 +21,8 @@ import sqlite3
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
-_DIR = os.path.dirname(os.path.abspath(__file__))
-_DB = os.path.join(_DIR, "watchdog.db")
+import paths
+_DB = paths.DB_PATH
 
 # Zalopay timezone for human-friendly timestamps
 _TZ = timezone(timedelta(hours=7))

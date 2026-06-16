@@ -26,27 +26,19 @@ from functools import partial
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-# Flat import mode (Docker: all files in /app/, no package prefix)
+# ROOT (chứa file này) lên sys.path để import các package con (agent/engine/...)
 _DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _DIR)
 
-# Load .env if present (local dev only; prod uses env vars injected by runtime)
-_env = Path(_DIR) / ".env"
-if _env.exists():
-    for _line in _env.read_text().splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _k, _v = _line.split("=", 1)
-            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+import paths  # nạp .env (local) + định nghĩa đường dẫn config/snapshots/data
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse, StreamingResponse
 from fastapi.concurrency import run_in_threadpool
 import uvicorn
 
-from claude_agent import run_agent
-import qa_service
-import webstore
+from agent.claude_agent import run_agent
+from services import qa_service, webstore
 
 # ---------------------------------------------------------------- scheduler
 try:
