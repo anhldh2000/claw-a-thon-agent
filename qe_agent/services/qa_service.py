@@ -23,27 +23,16 @@ import sqlite3
 from datetime import date
 from typing import Optional
 
-_DIR = os.path.dirname(os.path.abspath(__file__))
-_RULES = os.path.join(_DIR, "rules.yaml")
-_DB = os.path.join(_DIR, "watchdog.db")
+import paths
+from engine.rule_engine import RuleEngine, run as run_rules
+from engine.models import Ticket, DailyReport, CH_QE, CH_DEV_MS, CH_DEV_CRM
+from integrations.jira_adapter import normalize_issue, fetch_tickets as _adapter_fetch, SCAN_JQL
+from integrations import teams_sender
+from agent.claude_agent import run_agent, run_agent_stream, _is_checklist_request
+from services import webstore
 
-# Dual import: package mode (qe_agent.*) and flat mode (Docker /app)
-try:  # pragma: no cover
-    from .jira_adapter import normalize_issue, fetch_tickets as _adapter_fetch, SCAN_JQL
-    from .rule_engine import RuleEngine, run as run_rules
-    from .models import Ticket, DailyReport, CH_QE, CH_DEV_MS, CH_DEV_CRM
-    from . import teams_sender
-    from .claude_agent import run_agent, run_agent_stream, _is_checklist_request
-    from . import webstore
-except ImportError:  # pragma: no cover
-    import sys
-    sys.path.insert(0, _DIR)
-    from jira_adapter import normalize_issue, fetch_tickets as _adapter_fetch, SCAN_JQL
-    from rule_engine import RuleEngine, run as run_rules
-    from models import Ticket, DailyReport, CH_QE, CH_DEV_MS, CH_DEV_CRM
-    import teams_sender
-    from claude_agent import run_agent, run_agent_stream, _is_checklist_request
-    import webstore
+_RULES = paths.RULES_YAML
+_DB = paths.DB_PATH
 
 
 LEVEL_META = {
@@ -56,13 +45,13 @@ LEVEL_META = {
 
 # ---------------------------------------------------------------- helpers
 def _snapshot_path(name: str) -> str:
-    return name if os.path.isabs(name) else os.path.join(_DIR, name)
+    return paths.snapshot_path(name)
 
 
 def list_snapshots() -> list[dict]:
     """Every *.json in the agent dir that looks like a Jira snapshot."""
     out = []
-    for p in sorted(glob.glob(os.path.join(_DIR, "*.json"))):
+    for p in sorted(glob.glob(os.path.join(paths.SNAPSHOTS_DIR, "*.json"))):
         name = os.path.basename(p)
         try:
             data = json.load(open(p, encoding="utf-8"))

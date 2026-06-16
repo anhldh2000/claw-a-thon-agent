@@ -13,19 +13,8 @@ import urllib3
 from datetime import date, datetime
 from typing import Optional
 import requests
-try:
-    from .models import Ticket, STATUS_BLOCKED
-except ImportError:  # flat execution (Docker /app)
-    from models import Ticket, STATUS_BLOCKED
-
-# Load .env từ thư mục cha (project root)
-_env_file = os.path.join(os.path.dirname(__file__), "..", ".env")
-if os.path.exists(_env_file):
-    for _ln in open(_env_file, encoding="utf-8"):
-        _ln = _ln.strip()
-        if _ln and not _ln.startswith("#") and "=" in _ln:
-            _k, _v = _ln.split("=", 1)
-            os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+import paths  # noqa: F401 — nạp .env + đảm bảo sys.path gốc
+from engine.models import Ticket, STATUS_BLOCKED
 
 # Jira nội bộ dùng self-signed cert → tắt SSL verify
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -146,10 +135,7 @@ def fetch_by_sprint(sprint: str | None = None, team: str | None = None) -> list[
     jql = f"{clause} AND {ISSUETYPE_CLAUSE} ORDER BY created DESC"
     tickets = _search(jql)
     if team:
-        try:
-            from .models import ticket_in_team_sprint
-        except ImportError:
-            from models import ticket_in_team_sprint
+        from engine.models import ticket_in_team_sprint
         tickets = [t for t in tickets if ticket_in_team_sprint(t.sprints, team)]
     return tickets
 
@@ -222,10 +208,7 @@ def fetch_active_sprint(project_key: str, team: str | None = None) -> list[Ticke
            f"ORDER BY created DESC")
     tickets = _search(jql)
     if team:
-        try:
-            from .models import ticket_in_team_sprint
-        except ImportError:
-            from models import ticket_in_team_sprint
+        from engine.models import ticket_in_team_sprint
         tickets = [t for t in tickets if ticket_in_team_sprint(t.sprints, team)]
     return tickets
 
